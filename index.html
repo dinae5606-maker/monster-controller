@@ -1,92 +1,162 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Monster BLE Test</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      max-width: 500px;
-      margin: 0 auto;
-      padding: 30px 20px;
-      text-align: center;
-      background: #f5f5f7;
-    }
+<title>Monster Autonomous</title>
 
-    .card {
-      background: white;
-      border-radius: 20px;
-      padding: 25px;
-      box-shadow: 0 4px 20px rgba(0,0,0,.08);
-    }
+<style>
+body {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #f5f5f7;
+  margin: 0;
+  padding: 22px;
+  text-align: center;
+}
 
-    button {
-      width: 100%;
-      padding: 16px;
-      margin: 8px 0;
-      border: none;
-      border-radius: 14px;
-      font-size: 17px;
-    }
+.card {
+  max-width: 500px;
+  margin: auto;
+  background: white;
+  padding: 24px;
+  border-radius: 22px;
+  box-shadow: 0 4px 20px rgba(0,0,0,.08);
+}
 
-    #connect {
-      background: #007aff;
-      color: white;
-    }
+h1 { margin-bottom: 8px; }
 
-    .control {
-      background: #e8e8ed;
-    }
+.status {
+  margin: 16px 0;
+  font-size: 15px;
+}
 
-    #stop {
-      background: #ff3b30;
-      color: white;
-      font-weight: bold;
-    }
+.big {
+  font-size: 38px;
+  font-weight: 600;
+  margin: 15px;
+}
 
-    #status {
-      margin: 20px 0;
-      font-size: 15px;
-    }
-  </style>
+button {
+  width: 100%;
+  padding: 17px;
+  margin: 7px 0;
+  border: none;
+  border-radius: 14px;
+  font-size: 17px;
+}
+
+#connect {
+  background: #007aff;
+  color: white;
+}
+
+#start {
+  background: #34c759;
+  color: white;
+  font-weight: 600;
+}
+
+#stop {
+  background: #ff3b30;
+  color: white;
+  font-weight: 700;
+  font-size: 19px;
+}
+
+.secondary {
+  background: #e8e8ed;
+}
+
+label {
+  display: block;
+  margin-top: 20px;
+  font-size: 14px;
+}
+
+input[type=range] {
+  width: 100%;
+}
+
+#thought {
+  min-height: 42px;
+  margin: 15px 0;
+  color: #666;
+  font-size: 14px;
+}
+</style>
 </head>
 
 <body>
 
 <div class="card">
 
-  <h1>Monster BLE Test</h1>
+<h1>Monster Autonomous</h1>
 
-  <div id="status">未连接</div>
+<div id="connection" class="status">
+  MonsterPub：未连接
+</div>
 
-  <button id="connect" onclick="connectMonster()">
-    连接 MonsterPub
-  </button>
+<button id="connect" onclick="connectMonster()">
+  连接 MonsterPub
+</button>
 
-  <button class="control" onclick="setLevel(0x01)">
-    1%
-  </button>
+<div class="big">
+  <span id="level">0</span>
+</div>
 
-  <button class="control" onclick="setLevel(0x0A)">
-    10%
-  </button>
+<div id="thought">
+  等待开始
+</div>
 
-  <button class="control" onclick="setLevel(0x14)">
-    20%
-  </button>
+<label>
+  最高强度：
+  <strong><span id="maxLabel">20</span></strong>
+</label>
 
-  <button id="stop" onclick="stopMonster()">
-    ■ STOP
-  </button>
+<input
+  id="maxLevel"
+  type="range"
+  min="1"
+  max="64"
+  value="20"
+  oninput="maxLabel.innerText=this.value"
+>
+
+<label>
+  最长运行时间：
+  <strong>15 分钟</strong>
+</label>
+
+<br>
+
+<button id="start" onclick="startAutonomous()">
+  ▶ START AUTONOMOUS
+</button>
+
+<button class="secondary" onclick="setLevel(1)">
+  测试最低档 01
+</button>
+
+<button id="stop" onclick="emergencyStop()">
+  ■ EMERGENCY STOP
+</button>
 
 </div>
+
 
 <script>
 
 let device;
 let characteristic;
+
+let running = false;
+let currentLevel = 0;
+
+let timers = [];
+let sessionTimer = null;
+
+let recentActions = [];
 
 const SERVICE_UUID =
   "00006000-0000-1000-8000-00805f9b34fb";
@@ -94,20 +164,22 @@ const SERVICE_UUID =
 const CHARACTERISTIC_UUID =
   "00006001-0000-1000-8000-00805f9b34fb";
 
+
+/* ---------- BLE ---------- */
+
 async function connectMonster() {
 
   try {
 
-    document.getElementById("status").innerText =
-      "正在寻找设备…";
+    connection.innerText = "正在寻找设备…";
 
     device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
       optionalServices: [SERVICE_UUID]
     });
 
-    document.getElementById("status").innerText =
-      "正在连接 " + (device.name || "BLE device") + "…";
+    connection.innerText =
+      "正在连接 " + (device.name || "MonsterPub");
 
     const server = await device.gatt.connect();
 
@@ -119,81 +191,463 @@ async function connectMonster() {
         CHARACTERISTIC_UUID
       );
 
-    document.getElementById("status").innerText =
-      "● 已连接：" + (device.name || "MonsterPub");
+    connection.innerText =
+      "● 已连接：" +
+      (device.name || "MonsterPub");
 
     device.addEventListener(
       "gattserverdisconnected",
-      () => {
-        characteristic = null;
-        document.getElementById("status").innerText =
-          "连接已断开";
-      }
+      handleDisconnect
     );
 
-  } catch (error) {
+  }
 
-    document.getElementById("status").innerText =
+  catch(error) {
+
+    connection.innerText =
       "连接失败：" + error.message;
 
   }
 }
 
 
+function handleDisconnect() {
+
+  running = false;
+
+  clearAllTimers();
+
+  characteristic = null;
+
+  currentLevel = 0;
+  level.innerText = "0";
+
+  thought.innerText =
+    "蓝牙连接已断开";
+
+  connection.innerText =
+    "MonsterPub：连接已断开";
+}
+
+
+/* ---------- BASIC WRITE ---------- */
+
+async function rawWrite(value) {
+
+  if (!characteristic)
+    throw new Error("MonsterPub 未连接");
+
+  const data =
+    new Uint8Array([value]);
+
+  if (characteristic.writeValueWithoutResponse) {
+
+    await characteristic
+      .writeValueWithoutResponse(data);
+
+  } else {
+
+    await characteristic
+      .writeValue(data);
+
+  }
+
+  currentLevel = value;
+
+  level.innerText = value;
+}
+
+
 async function setLevel(value) {
 
   if (!characteristic) {
+
     alert("请先连接 MonsterPub");
     return;
+
   }
 
   try {
 
-    const data = new Uint8Array([value]);
+    await rawWrite(value);
 
-    if (characteristic.writeValueWithoutResponse) {
-      await characteristic.writeValueWithoutResponse(data);
-    } else {
-      await characteristic.writeValue(data);
-    }
+  } catch(error) {
 
-    document.getElementById("status").innerText =
-      "已发送：0x" +
-      value.toString(16).padStart(2, "0").toUpperCase();
-
-  } catch (error) {
-
-    document.getElementById("status").innerText =
+    thought.innerText =
       "写入失败：" + error.message;
 
+    emergencyStop();
+
   }
 }
 
 
-async function stopMonster() {
+/* ---------- TIMER HELPERS ---------- */
 
-  if (!characteristic) return;
+function sleep(ms) {
+
+  return new Promise(resolve => {
+
+    const id =
+      setTimeout(resolve, ms);
+
+    timers.push(id);
+
+  });
+}
+
+
+function clearAllTimers() {
+
+  timers.forEach(clearTimeout);
+
+  timers = [];
+
+  if (sessionTimer)
+    clearTimeout(sessionTimer);
+
+  sessionTimer = null;
+}
+
+
+/* ---------- RANDOM HELPERS ---------- */
+
+function random(min, max) {
+
+  return Math.floor(
+    Math.random() * (max - min + 1)
+  ) + min;
+}
+
+
+function chance(probability) {
+
+  return Math.random() < probability;
+}
+
+
+/* ---------- ACTION MEMORY ---------- */
+
+function remember(action) {
+
+  recentActions.push(action);
+
+  if (recentActions.length > 5)
+    recentActions.shift();
+}
+
+
+function lastActionWas(action) {
+
+  return recentActions[
+    recentActions.length - 1
+  ] === action;
+}
+
+
+/* ---------- BEHAVIOURS ---------- */
+
+async function hold() {
+
+  remember("hold");
+
+  const seconds = random(4, 12);
+
+  thought.innerText =
+    "保持一会儿 · " + seconds + "s";
+
+  await sleep(seconds * 1000);
+}
+
+
+async function pausePhase() {
+
+  remember("pause");
+
+  await rawWrite(0);
+
+  const seconds = random(2, 7);
+
+  thought.innerText =
+    "暂停 · " + seconds + "s";
+
+  await sleep(seconds * 1000);
+}
+
+
+async function jump() {
+
+  remember("jump");
+
+  const max =
+    Number(maxLevel.value);
+
+  let target;
+
+  if (currentLevel === 0) {
+
+    target = random(
+      1,
+      Math.max(1, Math.round(max * .45))
+    );
+
+  } else {
+
+    const movement =
+      random(
+        -Math.round(max * .30),
+        Math.round(max * .30)
+      );
+
+    target =
+      currentLevel + movement;
+
+    target =
+      Math.max(1, Math.min(max, target));
+  }
+
+  thought.innerText =
+    "变化 → " + target;
+
+  await rawWrite(target);
+
+  await sleep(random(3, 8) * 1000);
+}
+
+
+async function ramp() {
+
+  remember("ramp");
+
+  const max =
+    Number(maxLevel.value);
+
+  let start = currentLevel;
+
+  if (start === 0) {
+
+    start = random(
+      1,
+      Math.max(1, Math.round(max * .30))
+    );
+
+    await rawWrite(start);
+  }
+
+  let target =
+    random(1, max);
+
+  /* 避免目标和当前几乎一样 */
+
+  if (Math.abs(target - start) < 3) {
+
+    target =
+      start < max / 2
+      ? Math.min(max, start + random(3, 7))
+      : Math.max(1, start - random(3, 7));
+  }
+
+  const duration =
+    random(5, 14);
+
+  thought.innerText =
+    "缓慢变化 " +
+    start +
+    " → " +
+    target;
+
+  const steps =
+    Math.max(
+      1,
+      Math.abs(target - start)
+    );
+
+  const interval =
+    Math.max(
+      650,
+      (duration * 1000) / steps
+    );
+
+  const direction =
+    target > start ? 1 : -1;
+
+  let value = start;
+
+  while (
+    running &&
+    value !== target
+  ) {
+
+    value += direction;
+
+    await rawWrite(value);
+
+    await sleep(interval);
+  }
+
+  await sleep(random(2, 5) * 1000);
+}
+
+
+/* ---------- DECISION ENGINE ---------- */
+
+async function autonomousLoop() {
+
+  while (running) {
+
+    try {
+
+      /*
+        这不是单纯平均随机。
+
+        最近做过什么，会改变下一步概率。
+      */
+
+      let roll = Math.random();
+
+      if (
+        currentLevel > 0 &&
+        !lastActionWas("pause") &&
+        chance(.16)
+      ) {
+
+        await pausePhase();
+
+      }
+
+      else if (
+        !lastActionWas("ramp") &&
+        roll < .43
+      ) {
+
+        await ramp();
+
+      }
+
+      else if (
+        !lastActionWas("hold") &&
+        roll < .70
+      ) {
+
+        await hold();
+
+      }
+
+      else {
+
+        await jump();
+
+      }
+
+    }
+
+    catch(error) {
+
+      console.error(error);
+
+      await emergencyStop();
+
+      thought.innerText =
+        "发生错误，已自动停止";
+
+      return;
+    }
+  }
+}
+
+
+/* ---------- START ---------- */
+
+async function startAutonomous() {
+
+  if (!characteristic) {
+
+    alert("请先连接 MonsterPub");
+    return;
+
+  }
+
+  if (running)
+    return;
+
+  running = true;
+
+  recentActions = [];
+
+  thought.innerText =
+    "自主控制开始";
+
+  /*
+    最长 15 分钟。
+    到时直接本地停止。
+  */
+
+  sessionTimer =
+    setTimeout(
+      () => emergencyStop(),
+      15 * 60 * 1000
+    );
+
+  /*
+    从最低档开始，
+    不直接随机跳到较高值。
+  */
+
+  await rawWrite(1);
+
+  autonomousLoop();
+}
+
+
+/* ---------- HARD STOP ---------- */
+
+async function emergencyStop() {
+
+  running = false;
+
+  clearAllTimers();
 
   try {
 
-    const stop = new Uint8Array([0x00]);
+    if (characteristic)
+      await rawWrite(0);
 
-    if (characteristic.writeValueWithoutResponse) {
-      await characteristic.writeValueWithoutResponse(stop);
-    } else {
-      await characteristic.writeValue(stop);
-    }
+  } catch(e) {
 
-    document.getElementById("status").innerText =
-      "■ 已停止";
-
-  } catch (error) {
-
-    document.getElementById("status").innerText =
-      "停止失败：" + error.message;
+    console.error(e);
 
   }
+
+  currentLevel = 0;
+
+  level.innerText = "0";
+
+  thought.innerText =
+    "■ 已停止";
 }
+
+
+/*
+  页面被关闭/刷新时尝试停止。
+*/
+
+window.addEventListener(
+  "pagehide",
+  () => {
+
+    if (characteristic) {
+
+      try {
+
+        characteristic.writeValueWithoutResponse(
+          new Uint8Array([0])
+        );
+
+      } catch(e) {}
+
+    }
+  }
+);
 
 </script>
 
